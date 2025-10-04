@@ -15,10 +15,17 @@ func main() {
 		Handler: serveMux,
 	}
 
-	serveMux.Handle("/", http.FileServer(http.Dir(".")))
+	serveMux.Handle("/app/", http.StripPrefix("/app", http.FileServer(http.Dir("."))))
+	serveMux.HandleFunc("/healthz", handlerReadiness)
 
 	err := server.ListenAndServe()
 	if err != nil {
 		log.Fatalf("unable to listen and serve: %v", err)
 	}
+}
+
+func handlerReadiness(w http.ResponseWriter, req *http.Request) {
+	w.Header().Add("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }

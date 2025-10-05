@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -19,6 +20,7 @@ func main() {
 	apiConfig := apiConfig{}
 	serveMux.Handle("/app/", apiConfig.middlewareMetricsInc(handlerApp("/app", ".")))
 	serveMux.HandleFunc("GET /api/healthz", handlerReadiness)
+	serveMux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
 	serveMux.HandleFunc("GET /admin/metrics", apiConfig.handlerMetrics)
 	serveMux.HandleFunc("POST /admin/reset", apiConfig.handlerReset)
 
@@ -70,4 +72,56 @@ func (a *apiConfig) handlerReset(w http.ResponseWriter, req *http.Request) {
 	w.Header().Add("Content-type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	a.fileserverHits.Swap(0)
+}
+
+func handlerValidateChirp(w http.ResponseWriter, req *http.Request) {
+	type parameters struct {
+		Body string `json:"body"`
+	}
+
+	type errorResponse struct {
+		Error string `json:"error"`
+	}
+
+	type validResponse struct {
+		Valid bool `json:"valid"`
+	}
+
+	var respData []byte
+	var params parameters
+	decoder := json.NewDecoder(req.Body)
+	if err := decoder.Decode(&params); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Printf("while validating chirp: something went wrong: %v", err)
+		errResp := errorResponse{Error: "Something went wrong"}
+		respData, err = json.Marshal(errResp)
+		if err != nil {
+			log.Printf("while validating chirp: while sending error: %v", err)
+			respData = []byte{} //zero out again to be safe
+		}
+	} else {
+		if len(params.Body) > 140 {
+			w.WriteHeader(400)
+			log.Printf("chirp is too long")
+			errResp := errorResponse{Error: "Chirp is too long"}
+			respData, err = json.Marshal(errResp)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				log.Printf("while responding chirp to long: %v", err)
+				respData = []byte{}
+			}
+		} else {
+			log.Printf("chirp length valid")
+			w.WriteHeader(http.StatusOK)
+			validResp := validResponse{Valid: true}
+			respData, err = json.Marshal(validResp)
+			if err != nil {
+				log.Printf("while responding valid chirp: %v", err)
+				w.WriteHeader(http.StatusInternalServerError)
+				respData = []byte{}
+			}
+		}
+	}
+	w.Header().Set("Content-type", "application/json")
+	w.Write(respData)
 }

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
+	"strings"
 	"sync/atomic"
 )
 
@@ -83,10 +85,6 @@ func handlerValidateChirp(w http.ResponseWriter, req *http.Request) {
 		Error string `json:"error"`
 	}
 
-	type validResponse struct {
-		Valid bool `json:"valid"`
-	}
-
 	w.Header().Set("Content-type", "application/json")
 	var respData []byte
 
@@ -121,15 +119,52 @@ func handlerValidateChirp(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// Respond that all is well
-	log.Printf("chirp length valid")
+	//Check for forbidden words
+	badWords := []string{"kerfuffle", "sharbert", "fornax"}
+	chirpWords := strings.Fields(params.Body)
+	cleanedWords := []string{}
+	cleaned := false
+
+	for _, word := range chirpWords {
+		if slices.Contains(badWords, strings.ToLower(word)) {
+			cleanedWords = append(cleanedWords, "****")
+			cleaned = true
+		} else {
+			cleanedWords = append(cleanedWords, word)
+		}
+	}
+
+	rebuilt := strings.Join(cleanedWords, " ")
+
+	type cleanedResponse struct {
+		CleanedBody string `json:"cleaned_body"`
+	}
+
+	if cleaned {
+		log.Printf("cleaned chirp")
+		cleanedBody := cleanedResponse{CleanedBody: rebuilt}
+		respData, err := json.Marshal(cleanedBody)
+		if err != nil {
+			log.Printf("while responding with cleaned chirp: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			respData = []byte{}
+		}
+		w.Write(respData)
+		return
+	}
+
+	//All is well
+	log.Printf("chirp valid")
 	w.WriteHeader(http.StatusOK)
-	validResp := validResponse{Valid: true}
-	respData, err := json.Marshal(validResp)
+	cleanedResp := cleanedResponse{CleanedBody: params.Body}
+	respData, err := json.Marshal(cleanedResp)
 	if err != nil {
 		log.Printf("while responding valid chirp: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		respData = []byte{}
+		w.Write(respData)
+		return
 	}
+
 	w.Write(respData)
 }

@@ -87,7 +87,10 @@ func handlerValidateChirp(w http.ResponseWriter, req *http.Request) {
 		Valid bool `json:"valid"`
 	}
 
+	w.Header().Set("Content-type", "application/json")
 	var respData []byte
+
+	// Receive from client
 	var params parameters
 	decoder := json.NewDecoder(req.Body)
 	if err := decoder.Decode(&params); err != nil {
@@ -99,29 +102,34 @@ func handlerValidateChirp(w http.ResponseWriter, req *http.Request) {
 			log.Printf("while validating chirp: while sending error: %v", err)
 			respData = []byte{} //zero out again to be safe
 		}
-	} else {
-		if len(params.Body) > 140 {
-			w.WriteHeader(400)
-			log.Printf("chirp is too long")
-			errResp := errorResponse{Error: "Chirp is too long"}
-			respData, err = json.Marshal(errResp)
-			if err != nil {
-				w.WriteHeader(http.StatusInternalServerError)
-				log.Printf("while responding chirp to long: %v", err)
-				respData = []byte{}
-			}
-		} else {
-			log.Printf("chirp length valid")
-			w.WriteHeader(http.StatusOK)
-			validResp := validResponse{Valid: true}
-			respData, err = json.Marshal(validResp)
-			if err != nil {
-				log.Printf("while responding valid chirp: %v", err)
-				w.WriteHeader(http.StatusInternalServerError)
-				respData = []byte{}
-			}
-		}
+		w.Write(respData)
+		return
 	}
-	w.Header().Set("Content-type", "application/json")
+
+	// Check Length
+	if len(params.Body) > 140 {
+		w.WriteHeader(400)
+		log.Printf("chirp is too long")
+		errResp := errorResponse{Error: "Chirp is too long"}
+		respData, err := json.Marshal(errResp)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			log.Printf("while responding chirp to long: %v", err)
+			respData = []byte{}
+		}
+		w.Write(respData)
+		return
+	}
+
+	// Respond that all is well
+	log.Printf("chirp length valid")
+	w.WriteHeader(http.StatusOK)
+	validResp := validResponse{Valid: true}
+	respData, err := json.Marshal(validResp)
+	if err != nil {
+		log.Printf("while responding valid chirp: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		respData = []byte{}
+	}
 	w.Write(respData)
 }

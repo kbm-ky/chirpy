@@ -18,9 +18,9 @@ func main() {
 
 	apiConfig := apiConfig{}
 	serveMux.Handle("/app/", apiConfig.middlewareMetricsInc(handlerApp("/app", ".")))
-	serveMux.HandleFunc("GET /healthz", handlerReadiness)
-	serveMux.HandleFunc("GET /metrics", apiConfig.handlerMetrics)
-	serveMux.HandleFunc("POST /reset", apiConfig.handlerReset)
+	serveMux.HandleFunc("GET /api/healthz", handlerReadiness)
+	serveMux.HandleFunc("GET /api/metrics", apiConfig.handlerMetrics)
+	serveMux.HandleFunc("POST /api/reset", apiConfig.handlerReset)
 
 	err := server.ListenAndServe()
 	if err != nil {

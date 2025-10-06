@@ -1,16 +1,32 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"sync/atomic"
+
+	"github.com/joho/godotenv"
+	"github.com/kbm-ky/chirpy/internal/database"
+	_ "github.com/lib/pq"
 )
 
 func main() {
+	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		log.Printf("unable to open database: %v", err)
+		os.Exit(1)
+	}
+
+	dbQueries := database.New(db)
+
 	fmt.Printf("Starting server...\n")
 
 	serveMux := http.NewServeMux()
@@ -19,14 +35,16 @@ func main() {
 		Handler: serveMux,
 	}
 
-	apiConfig := apiConfig{}
+	apiConfig := apiConfig{
+		dbQueries: dbQueries,
+	}
 	serveMux.Handle("/app/", apiConfig.middlewareMetricsInc(handlerApp("/app", ".")))
 	serveMux.HandleFunc("GET /api/healthz", handlerReadiness)
 	serveMux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
 	serveMux.HandleFunc("GET /admin/metrics", apiConfig.handlerMetrics)
 	serveMux.HandleFunc("POST /admin/reset", apiConfig.handlerReset)
 
-	err := server.ListenAndServe()
+	err = server.ListenAndServe()
 	if err != nil {
 		log.Fatalf("unable to listen and serve: %v", err)
 	}
@@ -44,6 +62,7 @@ func handlerApp(strip string, rootPath string) http.Handler {
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+	dbQueries      *database.Queries
 }
 
 func (a *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {

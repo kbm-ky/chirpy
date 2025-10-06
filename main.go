@@ -44,8 +44,9 @@ func main() {
 	}
 	serveMux.Handle("/app/", apiConfig.middlewareMetricsInc(handlerApp("/app", ".")))
 	serveMux.HandleFunc("GET /api/healthz", handlerReadiness)
-	serveMux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
+	// serveMux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
 	serveMux.HandleFunc("POST /api/users", apiConfig.handlerUsers)
+	serveMux.HandleFunc("POST /api/chirps", apiConfig.handlerChirps)
 	serveMux.HandleFunc("GET /admin/metrics", apiConfig.handlerMetrics)
 	serveMux.HandleFunc("POST /admin/reset", apiConfig.handlerReset)
 
@@ -147,36 +148,36 @@ func (a *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
 	w.Write(jsonDat)
 }
 
-func handlerValidateChirp(w http.ResponseWriter, req *http.Request) {
-	type parameters struct {
-		Body string `json:"body"`
+func (a *apiConfig) handlerChirps(w http.ResponseWriter, req *http.Request) {
+
+	type chirpRequest struct {
+		Body   string    `json:"body"`
+		UserID uuid.UUID `json:"user_id"`
 	}
 
 	type errorResponse struct {
 		Error string `json:"error"`
 	}
 
-	w.Header().Set("Content-type", "application/json")
-	var respData []byte
-
 	// Receive from client
-	var params parameters
+	w.Header().Set("Content-Type", "application/json")
+	var chirp chirpRequest
 	decoder := json.NewDecoder(req.Body)
-	if err := decoder.Decode(&params); err != nil {
-		w.WriteHeader(http.StatusInternalServerError)
+	if err := decoder.Decode(&chirp); err != nil {
 		log.Printf("while validating chirp: something went wrong: %v", err)
 		errResp := errorResponse{Error: "Something went wrong"}
-		respData, err = json.Marshal(errResp)
+		respData, err := json.Marshal(errResp)
 		if err != nil {
 			log.Printf("while validating chirp: while sending error: %v", err)
 			respData = []byte{} //zero out again to be safe
 		}
+		w.WriteHeader(http.StatusInternalServerError)
 		w.Write(respData)
 		return
 	}
 
 	// Check Length
-	if len(params.Body) > 140 {
+	if len(chirp.Body) > 140 {
 		w.WriteHeader(400)
 		log.Printf("chirp is too long")
 		errResp := errorResponse{Error: "Chirp is too long"}
@@ -192,7 +193,7 @@ func handlerValidateChirp(w http.ResponseWriter, req *http.Request) {
 
 	//Check for forbidden words
 	badWords := []string{"kerfuffle", "sharbert", "fornax"}
-	chirpWords := strings.Fields(params.Body)
+	chirpWords := strings.Fields(chirp.Body)
 	cleanedWords := []string{}
 	cleaned := false
 
@@ -220,25 +221,141 @@ func handlerValidateChirp(w http.ResponseWriter, req *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			respData = []byte{}
 		}
+		w.WriteHeader(403)
 		w.Write(respData)
 		return
 	}
 
 	//All is well
 	log.Printf("chirp valid")
-	w.WriteHeader(http.StatusOK)
-	cleanedResp := cleanedResponse{CleanedBody: params.Body}
-	respData, err := json.Marshal(cleanedResp)
+
+	// call database to save chirp
+	createChirpParams := database.CreateChirpParams{
+		Body:   chirp.Body,
+		UserID: chirp.UserID,
+	}
+	dbChirp, err := a.dbQueries.CreateChirp(req.Context(), createChirpParams)
 	if err != nil {
-		log.Printf("while responding valid chirp: %v", err)
-		w.WriteHeader(http.StatusInternalServerError)
-		respData = []byte{}
-		w.Write(respData)
+		log.Printf("in handlerChirps, unable to create chirp: %v", err)
+		log.Printf("chirp: %v", chirp)
+		log.Printf("createChirpParams:%v", createChirpParams)
+		w.WriteHeader(501)
 		return
 	}
 
-	w.Write(respData)
+	//response
+	type chirpsResponse struct {
+		Body   string    `json:"body"`
+		UserID uuid.UUID `json:"user_id"`
+	}
+
+	response := chirpsResponse{
+		Body:   dbChirp.Body,
+		UserID: dbChirp.UserID,
+	}
+	jsonDat, err := json.Marshal(response)
+	if err != nil {
+		log.Printf("in handlerChirps, unable to encode response: %v", err)
+		w.WriteHeader(501)
+		return
+	}
+
+	w.WriteHeader(201)
+	w.Write(jsonDat)
 }
+
+// func handlerValidateChirp(w http.ResponseWriter, req *http.Request) {
+// 	type parameters struct {
+// 		Body string `json:"body"`
+// 	}
+
+// 	type errorResponse struct {
+// 		Error string `json:"error"`
+// 	}
+
+// 	w.Header().Set("Content-type", "application/json")
+// 	var respData []byte
+
+// 	// Receive from client
+// 	var params parameters
+// 	decoder := json.NewDecoder(req.Body)
+// 	if err := decoder.Decode(&params); err != nil {
+// 		w.WriteHeader(http.StatusInternalServerError)
+// 		log.Printf("while validating chirp: something went wrong: %v", err)
+// 		errResp := errorResponse{Error: "Something went wrong"}
+// 		respData, err = json.Marshal(errResp)
+// 		if err != nil {
+// 			log.Printf("while validating chirp: while sending error: %v", err)
+// 			respData = []byte{} //zero out again to be safe
+// 		}
+// 		w.Write(respData)
+// 		return
+// 	}
+
+// 	// Check Length
+// 	if len(params.Body) > 140 {
+// 		w.WriteHeader(400)
+// 		log.Printf("chirp is too long")
+// 		errResp := errorResponse{Error: "Chirp is too long"}
+// 		respData, err := json.Marshal(errResp)
+// 		if err != nil {
+// 			w.WriteHeader(http.StatusInternalServerError)
+// 			log.Printf("while responding chirp to long: %v", err)
+// 			respData = []byte{}
+// 		}
+// 		w.Write(respData)
+// 		return
+// 	}
+
+// 	//Check for forbidden words
+// 	badWords := []string{"kerfuffle", "sharbert", "fornax"}
+// 	chirpWords := strings.Fields(params.Body)
+// 	cleanedWords := []string{}
+// 	cleaned := false
+
+// 	for _, word := range chirpWords {
+// 		if slices.Contains(badWords, strings.ToLower(word)) {
+// 			cleanedWords = append(cleanedWords, "****")
+// 			cleaned = true
+// 		} else {
+// 			cleanedWords = append(cleanedWords, word)
+// 		}
+// 	}
+
+// 	rebuilt := strings.Join(cleanedWords, " ")
+
+// 	type cleanedResponse struct {
+// 		CleanedBody string `json:"cleaned_body"`
+// 	}
+
+// 	if cleaned {
+// 		log.Printf("cleaned chirp")
+// 		cleanedBody := cleanedResponse{CleanedBody: rebuilt}
+// 		respData, err := json.Marshal(cleanedBody)
+// 		if err != nil {
+// 			log.Printf("while responding with cleaned chirp: %v", err)
+// 			w.WriteHeader(http.StatusInternalServerError)
+// 			respData = []byte{}
+// 		}
+// 		w.Write(respData)
+// 		return
+// 	}
+
+// 	//All is well
+// 	log.Printf("chirp valid")
+// 	w.WriteHeader(http.StatusOK)
+// 	cleanedResp := cleanedResponse{CleanedBody: params.Body}
+// 	respData, err := json.Marshal(cleanedResp)
+// 	if err != nil {
+// 		log.Printf("while responding valid chirp: %v", err)
+// 		w.WriteHeader(http.StatusInternalServerError)
+// 		respData = []byte{}
+// 		w.Write(respData)
+// 		return
+// 	}
+
+// 	w.Write(respData)
+// }
 
 type User struct {
 	ID        uuid.UUID `json:"id"`

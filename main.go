@@ -10,7 +10,9 @@ import (
 	"slices"
 	"strings"
 	"sync/atomic"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"github.com/kbm-ky/chirpy/internal/database"
 	_ "github.com/lib/pq"
@@ -35,12 +37,15 @@ func main() {
 		Handler: serveMux,
 	}
 
+	platform := os.Getenv("PLATFORM")
 	apiConfig := apiConfig{
 		dbQueries: dbQueries,
+		platform:  platform,
 	}
 	serveMux.Handle("/app/", apiConfig.middlewareMetricsInc(handlerApp("/app", ".")))
 	serveMux.HandleFunc("GET /api/healthz", handlerReadiness)
 	serveMux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
+	serveMux.HandleFunc("POST /api/users", apiConfig.handlerUsers)
 	serveMux.HandleFunc("GET /admin/metrics", apiConfig.handlerMetrics)
 	serveMux.HandleFunc("POST /admin/reset", apiConfig.handlerReset)
 
@@ -63,6 +68,7 @@ func handlerApp(strip string, rootPath string) http.Handler {
 type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries      *database.Queries
+	platform       string
 }
 
 func (a *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -91,8 +97,54 @@ func (a *apiConfig) handlerMetrics(w http.ResponseWriter, req *http.Request) {
 
 func (a *apiConfig) handlerReset(w http.ResponseWriter, req *http.Request) {
 	w.Header().Add("Content-type", "text/plain; charset=utf-8")
+	if a.platform != "dev" {
+		w.WriteHeader(403)
+		return
+	}
+	err := a.dbQueries.DeleteAllUsers(req.Context())
+	if err != nil {
+		log.Printf("in handlerReset, unable to delete users: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	w.WriteHeader(http.StatusOK)
 	a.fileserverHits.Swap(0)
+}
+
+func (a *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
+	//get JSON
+	type parameters struct {
+		Email string `json:"email"`
+	}
+
+	var params parameters
+	decoder := json.NewDecoder(req.Body)
+	if err := decoder.Decode(&params); err != nil {
+		log.Printf("in handlerUsers, unable to decode JSON: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	//write to database
+	dbUser, err := a.dbQueries.CreateUser(req.Context(), params.Email)
+	if err != nil {
+		log.Printf("in handlerUsers, unable to add to database: %v", err)
+		w.WriteHeader(400)
+		return
+	}
+
+	user := User(dbUser)
+	jsonDat, err := json.Marshal(user)
+	if err != nil {
+		log.Printf("in handlerUsers, unable to encode JSON response: %v", err)
+		w.WriteHeader(400)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(201)
+	w.Write(jsonDat)
 }
 
 func handlerValidateChirp(w http.ResponseWriter, req *http.Request) {
@@ -186,4 +238,11 @@ func handlerValidateChirp(w http.ResponseWriter, req *http.Request) {
 	}
 
 	w.Write(respData)
+}
+
+type User struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
 }

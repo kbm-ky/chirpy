@@ -47,6 +47,7 @@ func main() {
 	// serveMux.HandleFunc("POST /api/validate_chirp", handlerValidateChirp)
 	serveMux.HandleFunc("POST /api/users", apiConfig.handlerUsers)
 	serveMux.HandleFunc("POST /api/chirps", apiConfig.handlerChirps)
+	serveMux.HandleFunc("GET /api/chirps", apiConfig.handlerGetChirps)
 	serveMux.HandleFunc("GET /admin/metrics", apiConfig.handlerMetrics)
 	serveMux.HandleFunc("POST /admin/reset", apiConfig.handlerReset)
 
@@ -145,6 +146,31 @@ func (a *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(201)
+	w.Write(jsonDat)
+}
+
+func (a *apiConfig) handlerGetChirps(w http.ResponseWriter, req *http.Request) {
+	dbChirps, err := a.dbQueries.GetAllChirps(req.Context())
+	if err != nil {
+		log.Printf("in handlerGetChirps, unable to get all chirps: %v", err)
+		w.WriteHeader(501)
+		return
+	}
+
+	chirps := []Chirp{}
+	for _, dbChirp := range dbChirps {
+		chirps = append(chirps, Chirp(dbChirp))
+	}
+
+	jsonDat, err := json.Marshal(chirps)
+	if err != nil {
+		log.Printf("in handlerGetChirps, unable to encode JSON: %v", err)
+		w.WriteHeader(501)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
 	w.Write(jsonDat)
 }
 
@@ -362,4 +388,12 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+}
+
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserID    uuid.UUID `json:"user_id"`
 }

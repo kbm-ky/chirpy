@@ -39,9 +39,11 @@ func main() {
 	}
 
 	platform := os.Getenv("PLATFORM")
+	secret := os.Getenv("SECRET")
 	apiConfig := apiConfig{
 		dbQueries: dbQueries,
 		platform:  platform,
+		secret:    secret,
 	}
 	serveMux.Handle("/app/", apiConfig.middlewareMetricsInc(handlerApp("/app", ".")))
 	serveMux.HandleFunc("GET /api/healthz", handlerReadiness)
@@ -73,6 +75,7 @@ type apiConfig struct {
 	fileserverHits atomic.Int32
 	dbQueries      *database.Queries
 	platform       string
+	secret         string
 }
 
 func (a *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -229,6 +232,27 @@ func (a *apiConfig) handlerChirps(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	//Authenticate
+	token, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		log.Printf("in handlerChirps, unable to get bearer token: %v", err)
+		return
+	}
+
+	userID, err := auth.ValidateJWT(token, a.secret)
+	if err != nil {
+		w.WriteHeader(http.StatusUnauthorized)
+		log.Printf("in handlerChirps, unable to validate jwt: %v", err)
+		return
+	}
+
+	// if userID != chirp.UserID {
+	// 	w.WriteHeader(http.StatusUnauthorized)
+	// 	log.Printf("in handlerChirps, userID mismatch: %s != %s", userID, chirp.UserID)
+	// 	return
+	// }
+
 	// Check Length
 	if len(chirp.Body) > 140 {
 		w.WriteHeader(400)
@@ -284,8 +308,9 @@ func (a *apiConfig) handlerChirps(w http.ResponseWriter, req *http.Request) {
 
 	// call database to save chirp
 	createChirpParams := database.CreateChirpParams{
-		Body:   chirp.Body,
-		UserID: chirp.UserID,
+		Body: chirp.Body,
+		// UserID: chirp.UserID,
+		UserID: userID,
 	}
 	dbChirp, err := a.dbQueries.CreateChirp(req.Context(), createChirpParams)
 	if err != nil {
@@ -347,8 +372,9 @@ func (a *apiConfig) handlerGetChirp(w http.ResponseWriter, req *http.Request) {
 func (a *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
 	//request
 	type loginRequest struct {
-		Password string `json:"password"`
-		Email    string `json:"email"`
+		Password         string `json:"password"`
+		Email            string `json:"email"`
+		ExpiresInSeconds int    `json:"expires_in_seconds,omitempty"`
 	}
 
 	var loginReq loginRequest
@@ -386,12 +412,40 @@ func (a *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	//Generate a token
+	expires_in_seconds := 1 * 60 * 60
+	if loginReq.ExpiresInSeconds > 0 && loginReq.ExpiresInSeconds < 60*60 {
+		expires_in_seconds = loginReq.ExpiresInSeconds * 60 * 60
+	}
+
+	duration := time.Duration(expires_in_seconds) * time.Second
+	log.Printf("in handlerLogin, duration: %v", duration)
+	token, err := auth.MakeJWT(dbUser.ID, a.secret, duration)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	//success
-	user := User{
-		Email:     dbUser.Email,
-		CreatedAt: dbUser.UpdatedAt,
-		UpdatedAt: dbUser.UpdatedAt,
+	// user := User{
+	// 	Email:     dbUser.Email,
+	// 	CreatedAt: dbUser.UpdatedAt,
+	// 	UpdatedAt: dbUser.UpdatedAt,
+	// 	ID:        dbUser.ID,
+	// }
+	type userReturn struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Email     string    `json:"email"`
+		Token     string    `json:"token"`
+	}
+	user := userReturn{
 		ID:        dbUser.ID,
+		CreatedAt: dbUser.CreatedAt,
+		UpdatedAt: dbUser.UpdatedAt,
+		Email:     dbUser.Email,
+		Token:     token,
 	}
 	jsonDat, err := json.Marshal(&user)
 	if err != nil {

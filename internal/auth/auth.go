@@ -1,6 +1,9 @@
 package auth
 
 import (
+	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/alexedwards/argon2id"
@@ -64,4 +67,23 @@ func ValidateJWT(tokenString, tokenSecret string) (uuid.UUID, error) {
 	}
 
 	return userID, nil
+}
+
+func GetBearerToken(headers http.Header) (string, error) {
+	authHeader := headers.Get("Authorization")
+	if authHeader == "" {
+		return "", fmt.Errorf("empty Authorization header")
+	}
+
+	//"Bearer TOKEN_STRING", strip "Bearer "
+	fields := strings.Fields(authHeader)
+	if len(fields) != 2 {
+		return "", fmt.Errorf("malformed Authorization header")
+	}
+
+	if fields[0] != "Bearer" {
+		return "", fmt.Errorf("malformed Authorization header, expected Bearer")
+	}
+
+	return fields[1], nil
 }

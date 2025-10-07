@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+	"github.com/kbm-ky/chirpy/internal/auth"
 	"github.com/kbm-ky/chirpy/internal/database"
 	_ "github.com/lib/pq"
 )
@@ -48,6 +49,7 @@ func main() {
 	serveMux.HandleFunc("POST /api/chirps", apiConfig.handlerChirps)
 	serveMux.HandleFunc("GET /api/chirps", apiConfig.handlerGetChirps)
 	serveMux.HandleFunc("GET /api/chirps/{id}", apiConfig.handlerGetChirp)
+	serveMux.HandleFunc("POST /api/login", apiConfig.handlerLogin)
 	serveMux.HandleFunc("GET /admin/metrics", apiConfig.handlerMetrics)
 	serveMux.HandleFunc("POST /admin/reset", apiConfig.handlerReset)
 
@@ -117,7 +119,8 @@ func (a *apiConfig) handlerReset(w http.ResponseWriter, req *http.Request) {
 func (a *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
 	//get JSON
 	type parameters struct {
-		Email string `json:"email"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 
 	var params parameters
@@ -128,15 +131,39 @@ func (a *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	if params.Password == "" {
+		log.Printf("in handlerUsers, empty password")
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	//hash password
+	hashed_password, err := auth.HashPassword(params.Password)
+	if err != nil {
+		log.Printf("in handlerUsers, unable to hash password: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	//write to database
-	dbUser, err := a.dbQueries.CreateUser(req.Context(), params.Email)
+	createUserArgs := database.CreateUserParams{
+		Email:          params.Email,
+		HashedPassword: hashed_password,
+	}
+	dbUser, err := a.dbQueries.CreateUser(req.Context(), createUserArgs)
 	if err != nil {
 		log.Printf("in handlerUsers, unable to add to database: %v", err)
 		w.WriteHeader(400)
 		return
 	}
 
-	user := User(dbUser)
+	// user := User(dbUser)
+	user := User{
+		ID:        dbUser.ID,
+		CreatedAt: dbUser.CreatedAt,
+		UpdatedAt: dbUser.UpdatedAt,
+		Email:     dbUser.Email,
+	}
 	jsonDat, err := json.Marshal(user)
 	if err != nil {
 		log.Printf("in handlerUsers, unable to encode JSON response: %v", err)
@@ -314,6 +341,66 @@ func (a *apiConfig) handlerGetChirp(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+	w.Write(jsonDat)
+}
+
+func (a *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
+	//request
+	type loginRequest struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
+	}
+
+	var loginReq loginRequest
+	decoder := json.NewDecoder(req.Body)
+	if err := decoder.Decode(&loginReq); err != nil {
+		log.Printf("in handlerLogin, unable to decode JSON: %v", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	//query DB
+	dbUser, err := a.dbQueries.GetUserByEmail(req.Context(), loginReq.Email)
+	if err != nil {
+		log.Printf("in handlerLogin, unable to find user by email: %v", err)
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("Incorrect email or password"))
+		return
+	}
+
+	//check password
+	match, err := auth.CheckPassword(loginReq.Password, dbUser.HashedPassword)
+	if err != nil {
+		log.Printf("in handlerLogin, uanble to check password: %v", err)
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("Incorrect email or password"))
+		return
+	}
+
+	if !match {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("Incorrect email or password"))
+		return
+	}
+
+	//success
+	user := User{
+		Email:     dbUser.Email,
+		CreatedAt: dbUser.UpdatedAt,
+		UpdatedAt: dbUser.UpdatedAt,
+		ID:        dbUser.ID,
+	}
+	jsonDat, err := json.Marshal(&user)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json")
 	w.Write(jsonDat)
 }
 

@@ -18,3 +18,8 @@ FROM users
 WHERE email = $1
 LIMIT 1;
 
+-- name: UpdateUserEmailAndPass :one
+UPDATE users
+SET updated_at = NOW(), email = $2, hashed_password = $3
+WHERE id = $1
+RETURNING *;

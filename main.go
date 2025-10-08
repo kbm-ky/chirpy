@@ -48,6 +48,7 @@ func main() {
 	serveMux.Handle("/app/", apiConfig.middlewareMetricsInc(handlerApp("/app", ".")))
 	serveMux.HandleFunc("GET /api/healthz", handlerReadiness)
 	serveMux.HandleFunc("POST /api/users", apiConfig.handlerUsers)
+	serveMux.HandleFunc("PUT /api/users", apiConfig.handlerPutUsers)
 	serveMux.HandleFunc("POST /api/chirps", apiConfig.handlerChirps)
 	serveMux.HandleFunc("GET /api/chirps", apiConfig.handlerGetChirps)
 	serveMux.HandleFunc("GET /api/chirps/{id}", apiConfig.handlerGetChirp)
@@ -178,6 +179,76 @@ func (a *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(201)
+	w.Write(jsonDat)
+}
+
+func (a *apiConfig) handlerPutUsers(w http.ResponseWriter, req *http.Request) {
+	//Check access token
+	accessToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		log.Printf("in handlerPutUsers, unable to get access token: %v", err)
+		w.WriteHeader(401)
+		return
+	}
+
+	//Authenticate
+	userID, err := auth.ValidateJWT(accessToken, a.secret)
+	if err != nil {
+		log.Printf("in handlerPutUsers, uanble to authenticate user: %v", err)
+		w.WriteHeader(401)
+		return
+	}
+
+	//decode request body
+	type reqBody struct {
+		Password string `json:"password"`
+		Email    string `json:"email"`
+	}
+
+	var body reqBody
+	decoder := json.NewDecoder(req.Body)
+	if err := decoder.Decode(&body); err != nil {
+		log.Printf("in handlerPutUsers, unable to decode request body: %v", err)
+		w.WriteHeader(401)
+		return
+	}
+
+	//hash password
+	hashedPassword, err := auth.HashPassword(body.Password)
+	if err != nil {
+		log.Printf("in handlerPutUsers, unable to hash password: %v", err)
+		w.WriteHeader(401)
+		return
+	}
+
+	//update
+	updateArgs := database.UpdateUserEmailAndPassParams{
+		ID:             userID,
+		Email:          body.Email,
+		HashedPassword: hashedPassword,
+	}
+	user, err := a.dbQueries.UpdateUserEmailAndPass(req.Context(), updateArgs)
+	if err != nil {
+		log.Printf("in handlerPutUsers, unable to update email and password: %v", err)
+		w.WriteHeader(401)
+		return
+	}
+
+	//success
+	resUser := User{
+		ID:        user.ID,
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+		Email:     user.Email,
+	}
+	jsonDat, err := json.Marshal(resUser)
+	if err != nil {
+		log.Printf("in handlerPutUsers, unable to encode response: %v", err)
+		w.WriteHeader(401)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
 	w.Write(jsonDat)
 }
 

@@ -52,6 +52,7 @@ func main() {
 	serveMux.HandleFunc("POST /api/chirps", apiConfig.handlerChirps)
 	serveMux.HandleFunc("GET /api/chirps", apiConfig.handlerGetChirps)
 	serveMux.HandleFunc("GET /api/chirps/{id}", apiConfig.handlerGetChirp)
+	serveMux.HandleFunc("DELETE /api/chirps/{id}", apiConfig.handlerDeleteChirp)
 	serveMux.HandleFunc("POST /api/login", apiConfig.handlerLogin)
 	serveMux.HandleFunc("POST /api/refresh", apiConfig.handlerRefresh)
 	serveMux.HandleFunc("POST /api/revoke", apiConfig.handlerRevoke)
@@ -275,6 +276,65 @@ func (a *apiConfig) handlerGetChirps(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(200)
 	w.Write(jsonDat)
+}
+
+func (a *apiConfig) handlerDeleteChirp(w http.ResponseWriter, req *http.Request) {
+	//authenticate
+	//Get bearer token
+	accessToken, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		log.Printf("in handlerDeleteChirp, unable to get bearer token: %v", err)
+		w.WriteHeader(401)
+		return
+	}
+
+	//validate
+	userID, err := auth.ValidateJWT(accessToken, a.secret)
+	if err != nil {
+		log.Printf("in handlerDeleteChirp, unable to validate: %v", err)
+		w.WriteHeader(401)
+		return
+	}
+
+	//Get chirp id
+	chirpIDStr := req.PathValue("id")
+	if chirpIDStr == "" {
+		log.Printf("in handlerDeleteChirp, no chirp id given")
+		w.WriteHeader(404)
+		return
+	}
+	chirpID, err := uuid.Parse(chirpIDStr)
+	if err != nil {
+		log.Printf("in handlerDeleteChirp, could not parse chirp id: %v", err)
+		w.WriteHeader(404)
+		return
+	}
+
+	//Is user the author?
+	chirp, err := a.dbQueries.GetChirp(req.Context(), chirpID)
+	if err != nil {
+		log.Printf("in handlerDeleteChirp, could not get chirp: %v", err)
+		w.WriteHeader(404)
+		return
+	}
+
+	if userID != chirp.UserID {
+		log.Printf("in handlerDeleteChirp, user is not the author")
+		w.WriteHeader(403)
+		return
+	}
+
+	//Delete finally
+	err = a.dbQueries.DeleteChirp(req.Context(), chirpID)
+	if err != nil {
+		log.Printf("in handlerDeleteChirp, unable to delete chirp: %v", err)
+		w.WriteHeader(404)
+		return
+	}
+
+	//success finally?
+	w.WriteHeader(204)
+
 }
 
 func (a *apiConfig) handlerChirps(w http.ResponseWriter, req *http.Request) {

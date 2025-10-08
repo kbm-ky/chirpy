@@ -56,6 +56,7 @@ func main() {
 	serveMux.HandleFunc("POST /api/login", apiConfig.handlerLogin)
 	serveMux.HandleFunc("POST /api/refresh", apiConfig.handlerRefresh)
 	serveMux.HandleFunc("POST /api/revoke", apiConfig.handlerRevoke)
+	serveMux.HandleFunc("POST /api/polka/webhooks", apiConfig.handlerPolkaWebhook)
 	serveMux.HandleFunc("GET /admin/metrics", apiConfig.handlerMetrics)
 	serveMux.HandleFunc("POST /admin/reset", apiConfig.handlerReset)
 
@@ -166,10 +167,11 @@ func (a *apiConfig) handlerUsers(w http.ResponseWriter, req *http.Request) {
 
 	// user := User(dbUser)
 	user := User{
-		ID:        dbUser.ID,
-		CreatedAt: dbUser.CreatedAt,
-		UpdatedAt: dbUser.UpdatedAt,
-		Email:     dbUser.Email,
+		ID:          dbUser.ID,
+		CreatedAt:   dbUser.CreatedAt,
+		UpdatedAt:   dbUser.UpdatedAt,
+		Email:       dbUser.Email,
+		IsChripyRed: dbUser.IsChirpyRed,
 	}
 	jsonDat, err := json.Marshal(user)
 	if err != nil {
@@ -237,10 +239,11 @@ func (a *apiConfig) handlerPutUsers(w http.ResponseWriter, req *http.Request) {
 
 	//success
 	resUser := User{
-		ID:        user.ID,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
-		Email:     user.Email,
+		ID:          user.ID,
+		CreatedAt:   user.CreatedAt,
+		UpdatedAt:   user.UpdatedAt,
+		Email:       user.Email,
+		IsChripyRed: user.IsChirpyRed,
 	}
 	jsonDat, err := json.Marshal(resUser)
 	if err != nil {
@@ -593,6 +596,7 @@ func (a *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
 		Email        string    `json:"email"`
 		Token        string    `json:"token"`
 		RefreshToken string    `json:"refresh_token"`
+		IsChirpyRed  bool      `json:"is_chirpy_red"`
 	}
 	user := userReturn{
 		ID:           dbUser.ID,
@@ -601,6 +605,7 @@ func (a *apiConfig) handlerLogin(w http.ResponseWriter, req *http.Request) {
 		Email:        dbUser.Email,
 		Token:        token,
 		RefreshToken: refreshToken,
+		IsChirpyRed:  dbUser.IsChirpyRed,
 	}
 	jsonDat, err := json.Marshal(&user)
 	if err != nil {
@@ -690,11 +695,56 @@ func (a *apiConfig) handlerRevoke(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(204)
 }
 
+func (a *apiConfig) handlerPolkaWebhook(w http.ResponseWriter, req *http.Request) {
+	// Decode request JSON
+	type reqBody struct {
+		Event string `json:"event"`
+		Data  struct {
+			UserID string `json:"user_id"`
+		} `json:"data"`
+	}
+
+	var body reqBody
+	decoder := json.NewDecoder(req.Body)
+	err := decoder.Decode(&body)
+	if err != nil {
+		log.Printf("in handlerPolkaWebhook, unable to decode req body: %v", err)
+		w.WriteHeader(501)
+		return
+	}
+
+	//Not an event we care about?  Return immediately
+	if body.Event != "user.upgraded" {
+		w.WriteHeader(204)
+		return
+	}
+
+	//Get user ID
+	userID, err := uuid.Parse(body.Data.UserID)
+	if err != nil {
+		log.Printf("in handlerPolkaWebhook, unable to parse user ID: %v", err)
+		w.WriteHeader(404)
+		return
+	}
+
+	//Update user in database
+	_, err = a.dbQueries.UpgradeUserChirpyRed(req.Context(), userID)
+	if err != nil {
+		log.Printf("in handlerPolkaWebhook, unable to upgrade user: %v", err)
+		w.WriteHeader(404)
+		return
+	}
+
+	//Success
+	w.WriteHeader(204)
+}
+
 type User struct {
-	ID        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
+	ID          uuid.UUID `json:"id"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Email       string    `json:"email"`
+	IsChripyRed bool      `json:"is_chirpy_red"`
 }
 
 type Chirp struct {

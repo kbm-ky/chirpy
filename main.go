@@ -40,10 +40,12 @@ func main() {
 
 	platform := os.Getenv("PLATFORM")
 	secret := os.Getenv("SECRET")
+	polkaKey := os.Getenv("POLKA_KEY")
 	apiConfig := apiConfig{
 		dbQueries: dbQueries,
 		platform:  platform,
 		secret:    secret,
+		polkaKey:  polkaKey,
 	}
 	serveMux.Handle("/app/", apiConfig.middlewareMetricsInc(handlerApp("/app", ".")))
 	serveMux.HandleFunc("GET /api/healthz", handlerReadiness)
@@ -81,6 +83,7 @@ type apiConfig struct {
 	dbQueries      *database.Queries
 	platform       string
 	secret         string
+	polkaKey       string
 }
 
 func (a *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -696,6 +699,21 @@ func (a *apiConfig) handlerRevoke(w http.ResponseWriter, req *http.Request) {
 }
 
 func (a *apiConfig) handlerPolkaWebhook(w http.ResponseWriter, req *http.Request) {
+	//Authenticate by checking for ApiKey
+	apiKey, err := auth.GetAPIKey(req.Header)
+	if err != nil {
+		log.Printf("in handlerPolkaWebhook, unable to get API Key: %v", err)
+		w.WriteHeader(401)
+		return
+	}
+
+	//compare
+	if apiKey != a.polkaKey {
+		log.Printf("in handlerPolkaWebhook, api keys do not match")
+		w.WriteHeader(401)
+		return
+	}
+
 	// Decode request JSON
 	type reqBody struct {
 		Event string `json:"event"`
@@ -706,7 +724,7 @@ func (a *apiConfig) handlerPolkaWebhook(w http.ResponseWriter, req *http.Request
 
 	var body reqBody
 	decoder := json.NewDecoder(req.Body)
-	err := decoder.Decode(&body)
+	err = decoder.Decode(&body)
 	if err != nil {
 		log.Printf("in handlerPolkaWebhook, unable to decode req body: %v", err)
 		w.WriteHeader(501)

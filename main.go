@@ -260,11 +260,26 @@ func (a *apiConfig) handlerPutUsers(w http.ResponseWriter, req *http.Request) {
 }
 
 func (a *apiConfig) handlerGetChirps(w http.ResponseWriter, req *http.Request) {
-	dbChirps, err := a.dbQueries.GetAllChirps(req.Context())
+	//check request for author_id
+	var dbChirps []database.Chirp
+	authorIDStr := req.URL.Query().Get("author_id")
+	authorID, err := uuid.Parse(authorIDStr)
 	if err != nil {
-		log.Printf("in handlerGetChirps, unable to get all chirps: %v", err)
-		w.WriteHeader(501)
-		return
+		// just get all chirps
+		dbChirps, err = a.dbQueries.GetAllChirps(req.Context())
+		if err != nil {
+			log.Printf("in handlerGetChirps, unable to get all chirps: %v", err)
+			w.WriteHeader(501)
+			return
+		}
+	} else {
+		//get the chirps for only the author
+		dbChirps, err = a.dbQueries.GetChirpsByAuthor(req.Context(), authorID)
+		if err != nil {
+			log.Printf("in handlerGetChirps, unable to get chirps by author: %v", err)
+			w.WriteHeader(501)
+			return
+		}
 	}
 
 	chirps := []Chirp{}

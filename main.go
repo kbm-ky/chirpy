@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -280,6 +281,14 @@ func (a *apiConfig) handlerGetChirps(w http.ResponseWriter, req *http.Request) {
 			w.WriteHeader(501)
 			return
 		}
+	}
+
+	// check sort query parameter
+	sortStr := req.URL.Query().Get("sort")
+	if sortStr == "desc" {
+		sort.Slice(dbChirps, func(i, j int) bool {
+			return dbChirps[i].CreatedAt.After(dbChirps[j].CreatedAt)
+		})
 	}
 
 	chirps := []Chirp{}
